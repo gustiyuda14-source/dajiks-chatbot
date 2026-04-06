@@ -521,6 +521,11 @@ def tidak_dikenali():
 
 def proses_pesan(pesan, nomor):
 
+    global pelanggan_baru
+
+    # Cek apakah ini pesan pertama dari nomor ini
+    adalah_pesan_pertama = nomor not in pelanggan_baru
+
     # Cek pamit admin → aktifkan chatbot
     is_pamit, nama_admin = cek_pamit_admin(pesan)
     if is_pamit:
@@ -639,6 +644,35 @@ def webhook():
             return jsonify({"status": "ignored"}), 200
 
         print(f"👤 {nomor}: {pesan}")
+
+        # Kalau pesan pertama — kirim sapaan halo dulu
+        if nomor not in pelanggan_baru:
+            pelanggan_baru.add(nomor)
+            sapaan = (
+                f"Halo Kak! Selamat datang di\n"
+                f"{nama_bisnis}! ☕🎯\n\n"
+                f"Wah senang banget ada yang\n"
+                f"mampir nih! 😊✨\n\n"
+                f"Ada yang bisa kami bantu\n"
+                f"hari ini Kak?\n\n"
+                f"💬 'menu' — lihat menu lengkap\n"
+                f"🎯 'harga' — tarif billiard\n"
+                f"📅 'booking' — reservasi meja\n"
+                f"🔍 'meja kosong' — cek meja\n"
+                f"⏰ 'jam buka' — jam operasional\n"
+                f"🛎️ 'mau pesan' — order makan/minum"
+            )
+            kirim_wa(nomor, sapaan)
+
+            # Kalau isi pesannya BUKAN sekedar halo
+            # langsung proses juga isi pesannya!
+            if not cek_kata(pesan, kata_halo):
+                import time
+                time.sleep(1)  # jeda 1 detik biar tidak overlap
+                balasan = proses_pesan(pesan, nomor)
+                if balasan:
+                    kirim_wa(nomor, balasan)
+            return jsonify({"status": "ok"}), 200
 
         balasan = proses_pesan(pesan, nomor)
 
