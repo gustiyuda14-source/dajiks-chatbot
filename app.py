@@ -645,6 +645,8 @@ def webhook():
 
         print(f"👤 {nomor}: {pesan}")
 
+        global pelanggan_baru
+
         # Kalau pesan pertama — kirim sapaan halo dulu
         if nomor not in pelanggan_baru:
             pelanggan_baru.add(nomor)
