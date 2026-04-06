@@ -1,7 +1,7 @@
 # ============================================================
 #   CHATBOT D'AJIKS COFFEE & BILLIARD
-#   ⭐⭐⭐⭐⭐ VERSI FINAL PRODUCTION
-#   Live Handover + Reservasi Cerdas + Status Buka Otomatis
+#   ⭐⭐⭐⭐⭐ VERSI FINAL + TELEGRAM NOTIFIKASI
+#   Setiap WA masuk → Notif langsung ke Telegram Boss!
 # ============================================================
 
 import datetime
@@ -11,7 +11,9 @@ from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-FONNTE_TOKEN = os.environ.get("FONNTE_TOKEN", "BhyKhA1kyYo24FbN4QtA")
+FONNTE_TOKEN   = os.environ.get("FONNTE_TOKEN", "BhyKhA1kyYo24FbN4QtA")
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8525358233:AAEisOTrLHjjRpC-5btLlCScPEok31WDoSA")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "1210429557")
 
 # ========================
 # VARIABEL D'AJIKS
@@ -59,10 +61,10 @@ def cek_kata(pesan, daftar_kata):
     return False
 
 def cek_status_buka():
-    now  = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
-    jam  = now.hour
+    now   = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
+    jam   = now.hour
     menit = now.minute
-    wkt  = jam + menit / 60
+    wkt   = jam + menit / 60
     coffee_buka   = wkt >= 9 + 10/60
     billiard_buka = wkt >= 10 + 15/60 or wkt < 2.0
     return coffee_buka, billiard_buka, jam, menit
@@ -82,6 +84,10 @@ def cek_ada_info_reservasi(pesan):
     ada_indikator = any(k in pesan_lower for k in indikator)
     return ada_angka or ada_indikator
 
+# ========================
+# KIRIM PESAN VIA FONNTE
+# ========================
+
 def kirim_pesan(nomor, pesan):
     url     = "https://api.fonnte.com/send"
     headers = {"Authorization": FONNTE_TOKEN}
@@ -90,10 +96,32 @@ def kirim_pesan(nomor, pesan):
         response = requests.post(url, headers=headers, data=data)
         print(f"✅ Terkirim ke {nomor}: {response.json()}")
     except Exception as e:
-        print(f"❌ Gagal kirim: {e}")
+        print(f"❌ Gagal kirim WA: {e}")
 
-def kirim_notif_staff(nomor_customer, pesan_customer):
-    notif = (
+# ========================
+# 🔔 KIRIM NOTIF KE TELEGRAM
+# ========================
+
+def kirim_telegram(pesan):
+    url  = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    data = {
+        "chat_id"    : TELEGRAM_CHAT_ID,
+        "text"       : pesan,
+        "parse_mode" : "HTML"
+    }
+    try:
+        response = requests.post(url, data=data)
+        print(f"🔔 Notif Telegram terkirim: {response.json()}")
+    except Exception as e:
+        print(f"❌ Gagal kirim Telegram: {e}")
+
+# ========================
+# NOTIF KERAS KE STAFF
+# ========================
+
+def kirim_notif_meja(nomor_customer, pesan_customer):
+    # Notif ke WA bisnis
+    notif_wa = (
         "🚨🚨🚨 PERHATIAN STAFF D'AJIKS 🚨🚨🚨\n\n"
         "⚠️ ADA CUSTOMER BUTUH BANTUAN SEGERA!\n\n"
         f"📲 Nomor: {nomor_customer}\n"
@@ -104,10 +132,46 @@ def kirim_notif_staff(nomor_customer, pesan_customer):
         "   'Admin [nama] pamit undur diri ya Kak'\n\n"
         "⏰ Mohon fast respon! 🙏"
     )
-    kirim_pesan(nomor_bisnis.replace("-", ""), notif)
+    kirim_pesan(nomor_bisnis.replace("-", ""), notif_wa)
+
+    # Notif ke Telegram Boss
+    notif_tg = (
+        "🚨 <b>CUSTOMER BUTUH BANTUAN!</b> 🚨\n\n"
+        f"📲 <b>Nomor:</b> {nomor_customer}\n"
+        f"💬 <b>Pesan:</b> {pesan_customer}\n\n"
+        "🎯 Customer tanya <b>KETERSEDIAAN MEJA</b>\n\n"
+        "⏰ Segera balas di WA Bisnis D'Ajiks!"
+    )
+    kirim_telegram(notif_tg)
+
+def kirim_notif_pesan_masuk(nomor, pesan, kategori):
+    now  = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
+    waktu = f"{now.hour:02d}.{now.minute:02d} WITA"
+
+    notif = (
+        f"🔔 <b>PESAN MASUK D'AJIKS</b>\n\n"
+        f"📲 <b>Nomor:</b> {nomor}\n"
+        f"💬 <b>Pesan:</b> {pesan}\n"
+        f"📌 <b>Kategori:</b> {kategori}\n"
+        f"🕐 <b>Waktu:</b> {waktu}"
+    )
+    kirim_telegram(notif)
+
+def kirim_notif_reservasi(nomor, pesan):
+    now   = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
+    waktu = f"{now.hour:02d}.{now.minute:02d} WITA"
+
+    notif = (
+        "📅 <b>RESERVASI BARU MASUK!</b>\n\n"
+        f"📲 <b>Nomor:</b> {nomor}\n"
+        f"📋 <b>Detail:</b>\n{pesan}\n\n"
+        f"🕐 <b>Waktu:</b> {waktu}\n\n"
+        "⚠️ Segera konfirmasi ke customer!"
+    )
+    kirim_telegram(notif)
 
 # ========================
-# RESPON
+# RESPON CHATBOT
 # ========================
 
 def balas_halo():
@@ -159,7 +223,7 @@ def balas_menu():
         "▸ Americano Segaraning  Rp 26rb\n"
         "▸ Americano Segara Sprk Rp 26rb\n\n"
         "🧊 ICE COFFEE\n"
-        "▸ Aren / Pandan         Rp 24/26rb\n"
+        "▸ Aren / Pandan         24/26rb\n"
         "▸ Caramel / Tiramisu    Rp 26rb\n"
         "▸ Vanilla Latte         Rp 26rb\n"
         "▸ Green Banana          Rp 26rb\n\n"
@@ -194,7 +258,6 @@ def balas_harga(pesan=""):
         "📌 Sistem Open/Loss Time tersedia\n"
         "   (bayar sesuai total jam main)\n"
     )
-
     if tanya_skrg:
         if 10 <= jam < 18:
             tarif_now = "Rp 25.000/jam 🌤️ (siang)"
@@ -318,7 +381,7 @@ def proses_pesan(pesan, nomor_pengirim):
     is_pamit, nama_admin = cek_pamit_admin(pesan)
     if is_pamit:
         mode_manual[nomor_pengirim] = False
-        return pesan  # Pesan pamit diteruskan ke customer
+        return pesan
 
     # Cek /selesai
     if pesan.strip().lower() == "/selesai":
@@ -330,32 +393,52 @@ def proses_pesan(pesan, nomor_pengirim):
             "lagi, kami siap membantu! 😊☕🎯"
         )
 
-    # Mode manual aktif — chatbot diam
+    # Mode manual aktif
     if mode_manual.get(nomor_pengirim, False):
+        # Tetap kirim notif ke Telegram saat mode manual
+        kirim_notif_pesan_masuk(nomor_pengirim, pesan, "💬 Balasan Customer (Mode Staff)")
         return None
 
-    # Proses kata kunci
+    # Proses kata kunci + kirim notif Telegram
     if cek_kata(pesan, kata_halo):
+        kirim_notif_pesan_masuk(nomor_pengirim, pesan, "👋 Salam/Halo")
         return balas_halo()
+
     elif cek_kata(pesan, kata_menu):
+        kirim_notif_pesan_masuk(nomor_pengirim, pesan, "☕ Tanya Menu")
         return balas_menu()
+
     elif cek_kata(pesan, kata_harga):
+        kirim_notif_pesan_masuk(nomor_pengirim, pesan, "🎯 Tanya Harga")
         return balas_harga(pesan)
+
     elif cek_kata(pesan, kata_jam):
+        kirim_notif_pesan_masuk(nomor_pengirim, pesan, "⏰ Tanya Jam Buka")
         return balas_jam()
+
     elif cek_kata(pesan, kata_cek_meja):
         mode_manual[nomor_pengirim] = True
-        kirim_notif_staff(nomor_pengirim, pesan)
+        kirim_notif_meja(nomor_pengirim, pesan)
         return balas_cek_meja()
+
     elif cek_kata(pesan, kata_reservasi):
+        kirim_notif_pesan_masuk(nomor_pengirim, pesan, "📅 Minta Reservasi")
         return balas_reservasi()
+
     elif cek_kata(pesan, kata_pesan_makan):
+        kirim_notif_pesan_masuk(nomor_pengirim, pesan, "🛎️ Mau Pesan Makanan")
         return balas_pesan_makan()
+
     elif cek_kata(pesan, kata_terima_kasih):
+        kirim_notif_pesan_masuk(nomor_pengirim, pesan, "😊 Terima Kasih")
         return balas_terima_kasih()
+
     elif cek_ada_info_reservasi(pesan):
+        kirim_notif_reservasi(nomor_pengirim, pesan)
         return balas_konfirmasi_reservasi(pesan)
+
     else:
+        kirim_notif_pesan_masuk(nomor_pengirim, pesan, "❓ Tidak Dikenali")
         return tidak_dikenali()
 
 # ========================
