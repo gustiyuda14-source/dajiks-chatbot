@@ -41,6 +41,9 @@ daftar_meja = {
 
 mode_manual = {}
 
+# Track customer yang sudah pernah chat
+pelanggan_baru = {}
+
 nama_menu_list = [
     "nasi goreng","bakso","bandeng","ayam betutu","nasi jinggo",
     "risol","ubi goreng","pisang goreng","kerupuk","kentang goreng",
@@ -521,8 +524,6 @@ def tidak_dikenali():
 
 def proses_pesan(pesan, nomor):
 
-    global pelanggan_baru
-
     # Cek apakah ini pesan pertama dari nomor ini
     adalah_pesan_pertama = nomor not in pelanggan_baru
 
@@ -649,7 +650,7 @@ def webhook():
 
         # Kalau pesan pertama — kirim sapaan halo dulu
         if nomor not in pelanggan_baru:
-            pelanggan_baru.add(nomor)
+            pelanggan_baru[nomor] = True
             sapaan = (
                 f"Halo Kak! Selamat datang di\n"
                 f"{nama_bisnis}! ☕🎯\n\n"
