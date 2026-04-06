@@ -197,17 +197,19 @@ def kirim_notif_menu(nomor, pesan, nama_menu):
 # Dashboard interaktif Telegram
 # ========================
 
-def kirim_dashboard_meja(nomor_customer, pesan_customer):
-    now   = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
-    waktu = f"{now.hour:02d}.{now.minute:02d} WITA"
+# Simpan state meja per customer untuk toggle
+state_meja_customer = {}
 
+def render_dashboard(nomor_customer, pesan_customer, waktu, state_lokal):
+    """Render ulang dashboard dengan state terbaru"""
     lantai_bawah = ""
     lantai_atas  = ""
 
     for num, info in daftar_meja.items():
-        if info["status"] == "kosong":
+        status = state_lokal.get(num, info["status"])
+        if status == "kosong":
             icon = "🟢"; label = "Kosong"
-        elif info["status"] == "terisi":
+        elif status == "terisi":
             icon = "⬛"; label = "Terisi"
         else:
             icon = "⚠️"; label = "Semi Aktif"
@@ -227,19 +229,20 @@ def kirim_dashboard_meja(nomor_customer, pesan_customer):
         f"🏢 <b>LANTAI BAWAH</b>\n{lantai_bawah}\n"
         f"🏢 <b>LANTAI ATAS</b>\n{lantai_atas}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"👆 Tap meja kosong untuk kirim ke customer!"
+        f"⬛ Tap meja yang <b>TERISI</b> → abu-abu\n"
+        f"Setelah selesai → tap <b>Kirim ke Customer</b>!"
     )
 
     buttons = []
     row = []
     for num, info in daftar_meja.items():
-        if info["status"] == "kosong":
-            btn = {"text": f"✅ {info['nama']} ({info['lantai']})",
-                   "callback_data": f"pilih:{num}:{nomor_customer}"}
-        elif info["status"] == "terisi":
-            btn = {"text": f"❌ {info['nama']}", "callback_data": "terisi"}
+        status = state_lokal.get(num, info["status"])
+        if status == "semi":
+            btn = {"text": f"⚠️ Meja {num}", "callback_data": f"semi:{num}:{nomor_customer}"}
+        elif status == "terisi":
+            btn = {"text": f"⬛ Meja {num} (Terisi)", "callback_data": f"toggle:{num}:{nomor_customer}"}
         else:
-            btn = {"text": f"⚠️ {info['nama']}", "callback_data": "semi"}
+            btn = {"text": f"🟢 Meja {num} (Kosong)", "callback_data": f"toggle:{num}:{nomor_customer}"}
 
         row.append(btn)
         if len(row) == 2:
@@ -248,12 +251,34 @@ def kirim_dashboard_meja(nomor_customer, pesan_customer):
     if row:
         buttons.append(row)
 
-    buttons.append([{
-        "text": "😔 Semua Penuh — Beritahu Customer",
-        "callback_data": f"penuh:{nomor_customer}"
-    }])
+    # Tombol aksi final
+    buttons.append([
+        {"text": "📤 Kirim Info ke Customer", "callback_data": f"send:{nomor_customer}"},
+    ])
+    buttons.append([
+        {"text": "🟢 Semua Kosong", "callback_data": f"semua_kosong:{nomor_customer}"},
+        {"text": "😔 Semua Penuh", "callback_data": f"penuh:{nomor_customer}"},
+    ])
 
-    kirim_telegram(pesan, {"inline_keyboard": buttons})
+    return pesan, {"inline_keyboard": buttons}
+
+def kirim_dashboard_meja(nomor_customer, pesan_customer):
+    now   = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
+    waktu = f"{now.hour:02d}.{now.minute:02d} WITA"
+
+    # Reset state meja untuk customer ini
+    state_lokal = {}
+    for num, info in daftar_meja.items():
+        state_lokal[num] = info["status"]
+
+    state_meja_customer[nomor_customer] = {
+        "state"    : state_lokal,
+        "waktu"    : waktu,
+        "pesan_cust": pesan_customer
+    }
+
+    pesan, markup = render_dashboard(nomor_customer, pesan_customer, waktu, state_lokal)
+    kirim_telegram(pesan, markup)
 
 # ========================
 # TELEGRAM CALLBACK HANDLER
@@ -710,22 +735,124 @@ def telegram_update():
                 data={"callback_query_id": cb_id}
             )
 
-            if cb_data.startswith("pilih:"):
+            # Toggle status meja
+            if cb_data.startswith("toggle:"):
                 parts          = cb_data.split(":")
                 num            = int(parts[1])
                 nomor_customer = parts[2]
-                info           = daftar_meja[num]
 
+                if nomor_customer not in state_meja_customer:
+                    return jsonify({"status": "ok"}), 200
+
+                data_state = state_meja_customer[nomor_customer]
+                state_lokal = data_state["state"]
+
+                # Toggle kosong ↔ terisi
+                if state_lokal.get(num) == "kosong":
+                    state_lokal[num] = "terisi"
+                elif state_lokal.get(num) == "terisi":
+                    state_lokal[num] = "kosong"
+
+                state_meja_customer[nomor_customer]["state"] = state_lokal
+
+                # Edit pesan Telegram dengan state terbaru
+                pesan_baru, markup_baru = render_dashboard(
+                    nomor_customer,
+                    data_state["pesan_cust"],
+                    data_state["waktu"],
+                    state_lokal
+                )
+
+                msg_id = callback.get("message", {}).get("message_id")
+                if msg_id:
+                    requests.post(
+                        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageText",
+                        json={
+                            "chat_id"     : TELEGRAM_CHAT_ID,
+                            "message_id"  : msg_id,
+                            "text"        : pesan_baru,
+                            "parse_mode"  : "HTML",
+                            "reply_markup": markup_baru
+                        }
+                    )
+
+            # Kirim info ke customer setelah admin set semua status
+            elif cb_data.startswith("send:"):
+                nomor_customer = cb_data.split(":")[1]
+
+                if nomor_customer not in state_meja_customer:
+                    return jsonify({"status": "ok"}), 200
+
+                state_lokal = state_meja_customer[nomor_customer]["state"]
+
+                # Build info meja untuk customer
+                kosong_list = []
+                terisi_list = []
+                semi_list   = []
+
+                for num, info in daftar_meja.items():
+                    status = state_lokal.get(num, info["status"])
+                    nama   = f"Meja {num} (Lantai {info['lantai']})"
+                    if status == "kosong":
+                        kosong_list.append(nama)
+                    elif status == "terisi":
+                        terisi_list.append(nama)
+                    else:
+                        semi_list.append(nama)
+
+                if kosong_list:
+                    meja_kosong_str = "\n".join([f"✅ {m}" for m in kosong_list])
+                    pesan_wa = (
+                        f"Kabar gembira Kak! 🎉\n\n"
+                        f"Ini status meja D'Ajiks\n"
+                        f"saat ini ya Kak! 🎯\n\n"
+                        f"🟢 <b>MEJA KOSONG:</b>\n"
+                        f"{meja_kosong_str}\n\n"
+                        f"Mau langsung booking Kak?\n"
+                        f"Bisa dibantu isi format berikut! 😊\n\n"
+                        f"👤 Nama      : [nama Kakak]\n"
+                        f"⏰ Jam Main  : [jam mulai]\n"
+                        f"🎯 Meja      : [pilih dari atas]\n"
+                        f"☕ Pre-order : [menu / kosongkan]\n\n"
+                        f"📌 Harap hadir 10 menit lebih awal!\n\n"
+                        f"Jika terlambat, 2 opsi:\n"
+                        f"1️⃣ Main sesuai jam reservasi\n"
+                        f"2️⃣ Reservasi hangus → ke customer\n"
+                        f"   yang hadir lebih awal 🙏\n\n"
+                        f"📲 Info: {nomor_bisnis}"
+                    )
+                else:
+                    pesan_wa = (
+                        f"Aduh maaf banget ya Kak 🙏\n\n"
+                        f"😔 Saat ini semua meja sedang\n"
+                        f"terisi penuh nih Kak!\n\n"
+                        f"Tapi jangan khawatir! Kalau ada\n"
+                        f"meja kosong kami langsung\n"
+                        f"kabari Kakak ya! 😊\n\n"
+                        f"Atau Kakak bisa coba datang\n"
+                        f"langsung ke D'Ajiks! 🎯\n\n"
+                        f"📲 {nomor_bisnis}"
+                    )
+
+                kirim_wa(nomor_customer, pesan_wa)
+                mode_manual[nomor_customer] = False
+                del state_meja_customer[nomor_customer]
+                kirim_telegram(
+                    f"✅ Info meja terkirim ke {nomor_customer}!\n"
+                    f"🤖 Chatbot aktif kembali!"
+                )
+
+            # Semua kosong
+            elif cb_data.startswith("semua_kosong:"):
+                nomor_customer = cb_data.split(":")[1]
                 pesan_wa = (
                     f"Kabar gembira Kak! 🎉\n\n"
-                    f"✅ {info['nama']} di Lantai {info['lantai']}\n"
-                    f"saat ini masih KOSONG dan\n"
-                    f"siap untuk Kakak gunakan! 🎯\n\n"
-                    f"Mau langsung booking sekarang Kak?\n"
-                    f"Bisa dibantu isi format berikut ya!\n\n"
+                    f"🟢 Semua meja D'Ajiks saat ini\n"
+                    f"<b>KOSONG</b> dan siap digunakan!\n\n"
+                    f"Mau langsung booking Kak? 😊\n\n"
                     f"👤 Nama      : [nama Kakak]\n"
                     f"⏰ Jam Main  : [jam mulai]\n"
-                    f"🎯 Meja      : Meja {num}\n"
+                    f"🎯 Meja      : [nomor meja 1-7]\n"
                     f"☕ Pre-order : [menu / kosongkan]\n\n"
                     f"📌 Harap hadir 10 menit lebih awal!\n\n"
                     f"Jika terlambat, 2 opsi:\n"
@@ -734,13 +861,11 @@ def telegram_update():
                     f"   yang hadir lebih awal 🙏\n\n"
                     f"📲 Info: {nomor_bisnis}"
                 )
-
                 kirim_wa(nomor_customer, pesan_wa)
                 mode_manual[nomor_customer] = False
-                kirim_telegram(
-                    f"✅ Info {info['nama']} terkirim ke {nomor_customer}!\n"
-                    f"🤖 Chatbot aktif kembali!"
-                )
+                if nomor_customer in state_meja_customer:
+                    del state_meja_customer[nomor_customer]
+                kirim_telegram(f"✅ Info semua kosong terkirim ke {nomor_customer}!")
 
             elif cb_data.startswith("penuh:"):
                 nomor_customer = cb_data.split(":")[1]
@@ -758,6 +883,8 @@ def telegram_update():
                 )
                 kirim_wa(nomor_customer, pesan_wa)
                 mode_manual[nomor_customer] = False
+                if nomor_customer in state_meja_customer:
+                    del state_meja_customer[nomor_customer]
                 kirim_telegram(f"✅ Info penuh terkirim ke {nomor_customer}!")
 
         return jsonify({"status": "ok"}), 200
