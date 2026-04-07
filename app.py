@@ -200,6 +200,9 @@ def kirim_notif_menu(nomor, pesan, nama_menu):
 # Simpan state meja per customer untuk toggle
 state_meja_customer = {}
 
+# Simpan data reservasi terakhir per customer
+data_reservasi_customer = {}
+
 def render_dashboard(nomor_customer, pesan_customer, waktu, state_lokal):
     """Render ulang dashboard dengan state terbaru"""
     lantai_bawah = ""
@@ -568,6 +571,52 @@ def proses_pesan(pesan, nomor):
             kirim_notif_umum(nomor, pesan, "😊 Terima Kasih")
             return balas_terima_kasih()
 
+    # Cek kata konfirmasi reservasi dari admin
+    kata_konfirm = ["konfirmasi", "konfirm", "dikonfirmasi", "sudah dikonfirmasi",
+                    "kami konfirmasi", "reservasi dikonfirmasi", "pesanan dikonfirmasi",
+                    "booking dikonfirmasi", "booking confirmed", "confirmed"]
+
+    if mode_manual.get(nomor, False) and any(k in pesan.lower() for k in kata_konfirm):
+        # Ambil data reservasi customer yang tersimpan
+        data_res = data_reservasi_customer.get(nomor, None)
+        mode_manual[nomor] = False
+
+        if data_res:
+            # Rangkum dan kirim ke customer
+            rangkuman = (
+                f"Horeee! Reservasi Kakak sudah\n"
+                f"DIKONFIRMASI! 🎉✅\n\n"
+                f"╔════════════════════════╗\n"
+                f"   📋 DETAIL RESERVASI\n"
+                f"╚════════════════════════╝\n\n"
+                f"{data_res}\n\n"
+                f"📌 PENTING — Harap hadir\n"
+                f"10 menit lebih awal ya Kak!\n\n"
+                f"Jika terlambat, 2 opsi:\n"
+                f"1️⃣ Main sesuai jam reservasi\n"
+                f"2️⃣ Reservasi hangus → ke customer\n"
+                f"   yang hadir lebih awal 🙏\n\n"
+                f"Sampai jumpa di D'Ajiks Kak!\n"
+                f"☕🎯✨"
+            )
+            # Kirim pesan admin ke customer dulu
+            kirim_wa(nomor, pesan)
+            import time
+            time.sleep(1)
+            # Lalu kirim rangkuman
+            kirim_wa(nomor, rangkuman)
+            # Bersihkan data reservasi
+            del data_reservasi_customer[nomor]
+            kirim_telegram(
+                f"✅ Reservasi {nomor} dikonfirmasi!\n"
+                f"📋 Rangkuman terkirim ke customer!\n"
+                f"🤖 Chatbot aktif kembali!"
+            )
+            return None  # Sudah kirim manual
+        else:
+            kirim_wa(nomor, pesan)
+            return None
+
     # Cek konfirmasi ada meja dari staff → aktifkan + arahkan reservasi
     if mode_manual.get(nomor, False) and cek_konfirmasi_ada_meja(pesan):
         mode_manual[nomor] = False
@@ -639,6 +688,8 @@ def proses_pesan(pesan, nomor):
             )
 
         elif cek_ada_info_reservasi(pesan):
+            # Simpan data reservasi customer untuk dirangkum nanti
+            data_reservasi_customer[nomor] = pesan
             kirim_notif_reservasi(nomor, pesan)
             return balas_konfirmasi_reservasi(pesan)
 
